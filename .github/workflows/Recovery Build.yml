@@ -2,31 +2,6 @@ name: Recovery Build
 
 on:
   workflow_dispatch:
-    inputs:
-      DEVICE_TREE_URL:
-        description: 'DEVICE_TREE_URL'
-        required: true
-        default: 'https://github.com/Shahed420/Infinix_X6725B'
-      DEVICE_TREE_BRANCH:
-        description: 'DEVICE_TREE_BRANCH'
-        required: true
-        default: 'android-12.1'
-      DEVICE_PATH:
-        description: 'DEVICE_PATH'
-        required: true
-        default: 'device/generic/X6725B'
-      DEVICE_NAME:
-        description: 'DEVICE_NAME'
-        required: true
-        default: 'X6725B'
-      MAKEFILE_NAME:
-        description: 'MAKEFILE_NAME'
-        required: true
-        default: 'twrp_X6725B'
-      BUILD_TARGET:
-        description: 'BUILD_TARGET'
-        required: true
-        default: 'vendor_boot'
 
 jobs:
   build:
@@ -42,8 +17,8 @@ jobs:
         run: |
           sudo apt-get update || true
           sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc libncurses5-dev python3-pip || true
-          sudo apt-get install -y python-is-python3 || sudo ln -sf /usr/bin/python3 /usr/bin/python || true
-          
+          sudo ln -sf /usr/bin/python3 /usr/bin/python || true
+
       - name: Install OpenJDK
         uses: actions/setup-java@v3
         with:
@@ -52,34 +27,29 @@ jobs:
 
       - name: Install repo
         run: |
-          mkdir ~/bin
+          mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
+
+      - name: Initialize and Sync
+        run: |
           export PATH=~/bin:$PATH
-
-      - name: Initialize repo
-        run: |
-          PATH=~/bin:$PATH
-          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
-
-      - name: Repo Sync
-        run: |
-          PATH=~/bin:$PATH
+          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b android-12.1
           repo sync -j$(nproc --all) --force-sync
 
       - name: Clone device tree
         run: |
-          git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ${{ github.event.inputs.DEVICE_PATH }}
+          git clone https://github.com/Shahed420/Infinix_X6725B -b android-12.1 device/generic/X6725B
 
       - name: Build
         run: |
-          PATH=~/bin:$PATH
+          export PATH=~/bin:$PATH
           source build/envsetup.sh
-          lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng
-          make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+          lunch twrp_X6725B-eng || lunch omni_X6725B-eng
+          make vendor_bootimage -j$(nproc --all)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
         with:
           name: TWRP-Recovery
-          path: out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
+          path: out/target/product/X6725B/vendor_boot.img
