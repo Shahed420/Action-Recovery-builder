@@ -16,7 +16,7 @@ jobs:
       - name: Prepare the environment
         run: |
           sudo apt-get update || true
-          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc libncurses5-dev python3-pip || true
+          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc python3 libncurses5-dev || true
           sudo ln -sf /usr/bin/python3 /usr/bin/python || true
 
       - name: Install OpenJDK
