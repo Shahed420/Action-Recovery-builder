@@ -1,55 +1,160 @@
-name: Recovery Build
+name: Build Vendor Boot Image for Infinix X6725B
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:      # ম্যানুয়ালি রান করার অনুমতি
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        path: device_tree
+        fetch-depth: 1
 
-      - name: Cleanup
-        uses: rokibhasansagar/slimhub_dot_files@main
+    - name: Maximize Build Space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-     - name: Prepare the environment
-        run: |
-          sudo apt-get update || true
-          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip bc libncurses5-dev python3-pip || true
-          sudo apt-get install -y python-is-python3 || sudo ln -sf /usr/bin/python3 /usr/bin/python || true
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y git-core gnupg flex bison build-essential \
+          zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 \
+          libncurses5 lib32ncurses5-dev x11proto-core-dev libx11-dev \
+          lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+          python3 python3-pip repo openjdk-11-jdk
+        sudo apt install -y bc cpio device-tree-compiler
 
-      - name: Install OpenJDK
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'zulu'
-          java-version: '8'
+    - name: Setup Git Configuration
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
 
-      - name: Install repo
-        run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
+    - name: Create Build Directory
+      run: mkdir -p ~/android/pa
 
-      - name: Initialize and Sync
-        run: |
-          export PATH=~/bin:$PATH
-          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b android-12.1
-          repo sync -j$(nproc --all) --force-sync
+    - name: Initialize PBRP Manifest
+      run: |
+        cd ~/android/pa
+        repo init -u https://github.com/PitchBlackRecoveryProject/manifest_pb.git -b android-12.1 --depth=1
 
-      - name: Clone device tree
-        run: |
-          git clone https://github.com/Shahed420/Infinix_X6725B -b android-12.1 device/generic/X6725B
+    - name: Clone Device Tree
+      run: |
+        cd ~/android/pa
+        mkdir -p .repo/local_manifests
+        cat > .repo/local_manifests/local_manifest.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <project path="device/infinix/X6725B" name="Shahed420/Infinix_X6725B_TWRP_Tree" remote="github" revision="main" />
+</manifest>
+EOF
 
-      - name: Build
-        run: |
-          export PATH=~/bin:$PATH
-          source build/envsetup.sh
-          lunch twrp_X6725B-eng || lunch omni_X6725B-eng
-          make vendor_bootimage -j$(nproc --all)
+    - name: Sync Source
+      run: |
+        cd ~/android/pa
+        repo sync -j$(nproc) --force-sync --no-clone-bundle --no-tags
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: TWRP-Recovery
-          path: out/target/product/X6725B/vendor_boot.img
+    - name: Build Vendor Boot Image
+      run: |
+        cd ~/android/pa
+        source build/envsetup.sh
+        lunch twrp_X6725B-eng
+        
+        # ক্লিন বিল্ড
+        make clean
+        
+        # vendor_boot ইমেজ বিল্ড
+        mka vendor_boot -j$(nproc)
+
+    - name: Check Build Output
+      run: |
+        cd ~/android/pa
+        echo "=== Build Output Files ==="
+        find out/target/product/X6725B/ -name "*.img" -type f | sort
+        
+        # বিশেষ করে vendor_boot.img খুঁজি
+        if [ -f out/target/product/X6725B/vendor_boot.img ]; then
+          echo "✅ vendor_boot.img found!"
+          ls -lh out/target/product/X6725B/vendor_boot.img
+        else
+          echo "❌ vendor_boot.img not found!"
+          exit 1
+        fi
+
+    - name: Create Flashable Zip
+      run: |
+        cd ~/android/pa
+        
+        # temporary ডিরেক্টরি তৈরি
+        mkdir -p flashable/META-INF/com/google/android
+        
+        # vendor_boot.img কপি
+        cp out/target/product/X6725B/vendor_boot.img flashable/
+        
+        # ফ্ল্যাশিং স্ক্রিপ্ট তৈরি
+        cat > flashable/META-INF/com/google/android/update-binary << 'SCRIPT'
+#!/sbin/sh
+#################
+# PitchBlack Recovery Installation Script
+#################
+
+ui_print "----------------------------------------"
+ui_print "Installing PitchBlack Recovery"
+ui_print "For Infinix Smart 10 Plus (X6725B)"
+ui_print "----------------------------------------"
+
+ui_print "Flashing vendor_boot image..."
+dd if=/dev/block/by-name/vendor_boot of=/tmp/vendor_boot_backup.img
+dd if=/sdcard/vendor_boot.img of=/dev/block/by-name/vendor_boot
+
+ui_print "----------------------------------------"
+ui_print "Installation Complete!"
+ui_print "Reboot to Recovery to use PitchBlack"
+ui_print "----------------------------------------"
+SCRIPT
+
+        cat > flashable/META-INF/com/google/android/update-script << 'SCRIPT'
+# Flashable Zip Template
+# This file is required for zip structure
+SCRIPT
+
+        # zip তৈরি
+        cd flashable
+        zip -r ../PitchBlack-X6725B-$(date +%Y%m%d).zip *
+        cd ..
+
+    - name: Upload Recovery Image
+      uses: actions/upload-artifact@v4
+      with:
+        name: vendor_boot-img
+        path: ~/android/pa/out/target/product/X6725B/vendor_boot.img
+        retention-days: 30
+
+    - name: Upload Flashable Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: flashable-zip
+        path: ~/android/pa/PitchBlack-X6725B-*.zip
+        retention-days: 30
+
+    - name: Create Release
+      if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ~/android/pa/out/target/product/X6725B/vendor_boot.img
+          ~/android/pa/PitchBlack-X6725B-*.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
